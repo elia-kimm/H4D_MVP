@@ -1,0 +1,123 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+# Set page layout
+st.set_page_config(page_title="Tactical Supply & Predictive Inventory Dashboard", layout="wide")
+
+# Initialize Session State
+if 'mortar_pool' not in st.session_state:
+    st.session_state.mortar_pool = 100
+if 'uas_pool' not in st.session_state:
+    st.session_state.uas_pool = 30
+if 'stockpile_81mm' not in st.session_state:
+    st.session_state.stockpile_81mm = 50
+if 'logs' not in st.session_state:
+    st.session_state.logs = [
+        {"Timestamp": "2026-10-19 10:33:38", "Unit": "Mortar Squad", "Caliber": "60mm Class B/C", "Qty": 5, "Action": "Reallocated"}
+    ]
+
+# Sidebar
+st.sidebar.header("Field Operations Input")
+selected_unit = st.sidebar.selectbox("Selecting Unit", ["Mortar Squad", "UAS Squad"])
+action_type = st.sidebar.selectbox("Action Type", ["Log Expenditure", "Reallocate Class B/C Round", "Receive Resupply"])
+munition_type = st.sidebar.selectbox("Munition Type", ["60mm Class A", "60mm Class B/C", "81mm Mortar"])
+qty = st.sidebar.number_input("Quantity", min_value=1, max_value=100, value=5)
+
+if st.sidebar.button("Submit Tactical Log"):
+    if action_type == "Log Expenditure":
+        if "60mm" in munition_type and st.session_state.mortar_pool >= qty:
+            st.session_state.mortar_pool -= qty
+        elif "81mm" in munition_type and st.session_state.stockpile_81mm >= qty:
+            st.session_state.stockpile_81mm -= qty
+    elif action_type == "Reallocate Class B/C Round":
+        if st.session_state.mortar_pool >= qty:
+            st.session_state.mortar_pool -= qty
+            st.session_state.uas_pool += qty
+    
+    st.session_state.logs.append({
+        "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Unit": selected_unit,
+        "Caliber": munition_type,
+        "Qty": qty,
+        "Action": action_type
+    })
+    st.rerun()
+
+# Title Block
+st.title("Tactical Supply & Predictive Inventory Dashboard")
+st.caption("Real-Time Munition Tracking, Predictive Burn-Down & Strict Deconflicted Allocation")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# Metrics Header
+col1, col2, col3 = st.columns(3)
+col1.metric("60mm Serviceable (Mortars)", f"{st.session_state.mortar_pool} rounds")
+col2.metric("60mm Available (UAS Payload)", f"{st.session_state.uas_pool} rounds", delta="Includes Re-allocated Class B/C", delta_color="normal")
+col3.metric("81mm Stockpile", f"{st.session_state.stockpile_81mm} rounds")
+
+st.markdown("<br><hr>", unsafe_allow_html=True)
+
+# Predictive Consumption & Burn-Down Forecast
+st.subheader("Predictive Consumption & Burn-Down Forecast")
+
+threat_level = st.select_slider(
+    "Select Target Mission Intensity / Threat Level:",
+    options=["Low Patrol", "Standard Engagement", "High Payoff Target (HPTL) Strike"],
+    value="Standard Engagement"
+)
+
+# Calculate Burn Rates
+rates = {
+    "Low Patrol": 4,
+    "Standard Engagement": 8,
+    "High Payoff Target (HPTL) Strike": 18
+}
+
+rate = rates[threat_level]
+hours = np.arange(0, 13, 1)
+projected_stock = [max(0, st.session_state.mortar_pool - (rate * h)) for h in hours]
+
+# Plotly Burn-Down Chart
+fig = go.Figure()
+
+# Stock trajectory line
+fig.add_trace(go.Scatter(
+    x=hours, y=projected_stock,
+    mode='lines+markers',
+    name='Projected 60mm Stock',
+    line=dict(color='#1f77b4', width=2)
+))
+
+# Critical Threshold dashed line (20 rounds)
+fig.add_trace(go.Scatter(
+    x=[0, 12], y=[20, 20],
+    mode='lines',
+    name='Critical Threshold (20 Rounds)',
+    line=dict(color='red', dash='dash')
+))
+
+fig.update_layout(
+    title=f"<b>60mm Supply Burn-Down ({threat_level} Profile)</b>",
+    xaxis_title="Hours From Now",
+    yaxis_title="Projected 60mm Stock",
+    height=400,
+    margin=dict(l=20, r=20, t=40, b=20),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Status Alert
+hours_remaining = round(st.session_state.mortar_pool / rate, 1) if rate > 0 else 999
+if hours_remaining < 2.5:
+    st.error(f"SUPPLY WARNING: Projected exhaustion under 2.5 hours ({hours_remaining} hrs left). Resupply needed.")
+else:
+    st.success(f"Supply Status Stable: Current stock supports ~{hours_remaining} hours of operations under '{threat_level}' intensity.")
+
+st.markdown("<br><hr>", unsafe_allow_html=True)
+
+# Deconflicted Activity Log Table
+st.subheader("Deconflicted Activity Log")
+st.table(pd.DataFrame(st.session_state.logs))
